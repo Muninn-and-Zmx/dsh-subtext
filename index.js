@@ -21,6 +21,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { randomUUID } from 'node:crypto'
 import { DEFAULTS, classify, extractText, isUserMessage, mergeRules, sourceKind, withWord } from './rules.js';
 import { SECTION_NAME, renderSubtext } from './text.js';
 
@@ -344,6 +345,8 @@ export async function apply(ctx, config = {}) {
             text: '三层还没过完。开口之前先调 `subtext_pass`，把这一轮读到的情感、需求、说不出口的部分各写一句。',
           },
         ],
+        role: 'user',
+        id: randomUUID(),
         source: { kind: 'subtext' },
       });
     } catch (error) {
