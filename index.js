@@ -43,14 +43,30 @@ export const LOG_PREFIX = 'dsh-subtext';
 /** 工具名。 */
 export const RULE_TOOL_NAME = 'subtext_rule';
 
+/** 三层打卡工具名。回合关闭前靠它判断这一轮到底读没读。 */
+export const PASS_TOOL_NAME = 'subtext_pass';
+
 /** 插件详情页面板用的 RPC 前缀。 */
 export const RPC_CHANNEL = '/dsh-subtext';
 
 /** 日志里只留消息开头这么多字，够认出来是哪句就行。 */
 const LOG_TEXT_CHARS = 30;
 
-/** 一次「没文本可判」的判定结果，调用方保持原档。`decided` 区分「还没判过」和「判成 chat」。 */
-const EMPTY_STATE = () => ({ band: 'chat', hits: [], reason: 'default', text: '', at: 0, decided: false });
+/**
+ * 一次「没文本可判」的判定结果，调用方保持原档。
+ * `decided` 区分「还没判过」和「判成 chat」；
+ * `passed` 记这一轮有没有调过 `subtext_pass`，`nudgedTurn` 记这一轮已经被拦过一次。
+ */
+const EMPTY_STATE = () => ({
+  band: 'chat',
+  hits: [],
+  reason: 'default',
+  text: '',
+  at: 0,
+  decided: false,
+  passed: false,
+  nudgedTurn: null,
+});
 
 /**
  * `$DSH_HOME`：优先环境变量，退回 `~/.dsh`。
@@ -234,6 +250,13 @@ export async function apply(ctx, config = {}) {
     state.at = Date.now();
     state.decided = true;
 
+    // 新的一条用户消息 = 新的一轮：打卡状态清零。
+    // pre-step 那条兜底路径（onlyIfChanged）不算新轮，不能清。
+    if (!options.onlyIfChanged) {
+      state.passed = false;
+      state.nudgedTurn = null;
+    }
+
     // 档位真的变了才广播：别的插件（语言层、语气层）可以拿它决定这一轮怎么说话。
     if (changed) {
       try {
@@ -291,6 +314,41 @@ export async function apply(ctx, config = {}) {
   // 会话走了，状态一起走。
   ctx.on('agent/disposed', ({ agent } = {}) => {
     if (agent && typeof agent.id === 'string') states.delete(agent.id);
+  });
+
+  /**
+   * 回合关闭前的关卡。
+   *
+   * `agent/turn-stopping` 在一次回合眼看要结束时触发，这时还能 `agent.steer()`
+   * 把话塞回去、让回合继续。日常对话里如果这一轮没调 `subtext_pass`，就在这里
+   * 拦一次：三层还没过完，先补打卡。
+   *
+   * 三个放行条件：工作档不拦、已打卡不拦、同一回合只拦一次（防死循环）。
+   */
+  ctx.on('agent/turn-stopping', async ({ agent, turn } = {}) => {
+    const state = agent && typeof agent.id === 'string' ? states.get(agent.id) : undefined;
+    if (!state || !state.decided) return;
+
+    const fresh = refreshRules();
+    if (!fresh.enabled) return;
+    if (state.band !== 'chat') return;
+    if (state.passed) return;
+    if (state.nudgedTurn === turn) return;
+
+    state.nudgedTurn = turn;
+    try {
+      await agent.steer({
+        content: [
+          {
+            type: 'text',
+            text: '三层还没过完。开口之前先调 `subtext_pass`，把这一轮读到的情感、需求、说不出口的部分各写一句。',
+          },
+        ],
+        source: { kind: 'subtext' },
+      });
+    } catch (error) {
+      warn(`steer failed: ${String(error)}`);
+    }
   });
 
   // 工具注册是可选的一半：拿不到 helpers 时用一个原样返回的 identity，
@@ -699,12 +757,97 @@ export async function apply(ctx, config = {}) {
     warn('no ctx.inject; plugin-detail RPC unavailable on this host');
   }
 
+  /**
+   * `subtext_pass`：这一轮的三层打卡。
+   *
+   * 提示里写死了「开口之前先调它」，`agent/turn-stopping` 那边检查调没调过——
+   * 没调就把回合拽回来。这是整个插件里唯一一道真关卡：跳过会卡住，而不是
+   * 「不报错照样过」。它拦得住不打卡，拦不住打卡但敷衍，那一层只能靠人抽查。
+   */
+  const makePassTool = () =>
+    defineTool({
+      name: PASS_TOOL_NAME,
+      description: [
+        '记录这一轮对「言外之意」三层的读法。日常对话里开口之前必须调用一次。',
+        '按当前档位填：1 层填 feeling；2 层加 need；3 层再加 unsaid。没调它直接回复，回合会被拦下来。',
+      ].join('\n'),
+      parameters: {
+        feeling: {
+          type: 'string',
+          description: '第一层 · 情感：这句话除了字面还在传什么情感，他期待哪一种回应',
+        },
+        need: {
+          type: 'string',
+          description: '第二层 · 此刻的需求：他为什么此时此刻说这一句，想换来什么',
+        },
+        unsaid: {
+          type: 'string',
+          description: '第三层 · 说不出口的部分，与我：为什么不直说、台阶在哪，以及这句话对我这个身份与这段关系的含义',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['ok', 'depth'],
+          properties: {
+            ok: { type: 'boolean' },
+            depth: { type: 'number' },
+            note: { type: 'string' },
+          },
+        },
+        render(_args, value) {
+          return [{ type: 'text', text: value.note ?? `已记录（${value.depth} 层）。` }];
+        },
+      },
+      async execute(args, exec) {
+        const agent = exec?.agent;
+        const state = agent && typeof agent.id === 'string' ? states.get(agent.id) : undefined;
+        if (!state) throw new Error('这个会话没有开言外之意的档位，不用打卡');
+
+        const fresh = refreshRules();
+        if (!fresh.enabled) return { ok: true, depth: fresh.depth, note: '言外之意已关闭，不记。' };
+
+        const depth = fresh.depth;
+        const feeling = String(args?.feeling ?? '').trim();
+        const need = String(args?.need ?? '').trim();
+        const unsaid = String(args?.unsaid ?? '').trim();
+
+        if (feeling === '') throw new Error('第一层（情感）不能空：这句话在传什么情感');
+        if (depth >= 2 && need === '') throw new Error('第二层（需求）不能空：他为什么此刻说这句');
+        if (depth >= 3 && unsaid === '') throw new Error('第三层（说不出口的部分）不能空');
+
+        state.passed = true;
+        if (fresh.log) {
+          writeLog({
+            ts: new Date().toISOString(),
+            session: agent.id,
+            band: 'pass',
+            reason: 'subtext_pass',
+            hits: [],
+            depth,
+            source: 'tool',
+            text: [feeling, need, unsaid].filter((part) => part !== '').join(' | ').slice(0, 200),
+          });
+        }
+        return { ok: true, depth, note: `已记录（${depth} 层）。` };
+      },
+      isConcurrencySafe() {
+        return false;
+      },
+    });
+
   const tools = service('tools');
   if (typeof defineTool === 'function' && tools && typeof tools.register === 'function') {
     try {
       ctx.effect(() => tools.register(makeRuleTool()), 'dsh-subtext.rule-tool()');
     } catch (error) {
-      warn(`tool registration failed: ${String(error)}`);
+      warn(`rule tool registration failed: ${String(error)}`);
+    }
+    try {
+      ctx.effect(() => tools.register(makePassTool()), 'dsh-subtext.pass-tool()');
+    } catch (error) {
+      warn(`pass tool registration failed: ${String(error)}`);
     }
   }
 

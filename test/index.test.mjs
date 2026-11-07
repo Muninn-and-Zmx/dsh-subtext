@@ -105,6 +105,7 @@ async function rpc(harness, endpoint, payload) {
 /** 一个会话；`scoped: false` 用来模拟拿不到 systemPrompt 的情况。 */
 function makeAgent(id, { scoped = true, parent = null } = {}) {
   const sections = [];
+  const steered = [];
   const agentCtx = {
     get(serviceName) {
       if (serviceName !== 'systemPrompt' || !scoped) return undefined;
@@ -119,8 +120,16 @@ function makeAgent(id, { scoped = true, parent = null } = {}) {
       return fn();
     },
   };
-  const agent = { id, ctx: agentCtx, session: parent ? { parentSession: parent } : {} };
+  const agent = {
+    id,
+    ctx: agentCtx,
+    session: parent ? { parentSession: parent } : {},
+    async steer(message) {
+      steered.push(message);
+    },
+  };
   agent.sections = sections;
+  agent.steered = steered;
   return agent;
 }
 
@@ -515,5 +524,99 @@ test('没有 webServer 时不崩，也不挂路由', async () => {
 
     assert.equal(harness.routes.length, 0);
     assert.match(agent.sections[0].text(), /第一层 · 情感/);
+  });
+});
+
+test('subtext_pass 按档位校验：depth 3 三层都要', async () => {
+  await withHome(async (home) => {
+    await writeFile(join(home, RULES_FILE), JSON.stringify({ workHints: [], depth: 3 }), 'utf8');
+    const harness = makeHarness();
+    const agent = makeAgent('s1');
+    await boot(harness, agent);
+
+    const pass = harness.tools.find((tool) => tool.name === 'subtext_pass');
+    assert.ok(pass, 'subtext_pass 应已注册');
+
+    await assert.rejects(() => pass.execute({ feeling: '有点累' }, { agent }), /第二层/);
+    await assert.rejects(
+      () => pass.execute({ feeling: '有点累', need: '想被听见' }, { agent }),
+      /第三层/,
+    );
+
+    const ok = await pass.execute(
+      { feeling: '有点累', need: '想被听见', unsaid: '不想承认没人陪' },
+      { agent },
+    );
+    assert.equal(ok.ok, true);
+    assert.equal(ok.depth, 3);
+  });
+});
+
+test('subtext_pass 在 depth 1 只要一层', async () => {
+  await withHome(async () => {
+    const harness = makeHarness();
+    const agent = makeAgent('s1');
+    await boot(harness, agent);
+
+    const pass = harness.tools.find((tool) => tool.name === 'subtext_pass');
+    const ok = await pass.execute({ feeling: '只是随口' }, { agent });
+    assert.equal(ok.depth, 1);
+  });
+});
+
+test('回合关闭时没打卡，就把回合拽回来；同一回合只拦一次', async () => {
+  await withHome(async () => {
+    const harness = makeHarness();
+    const agent = makeAgent('s1');
+    await boot(harness, agent);
+
+    await harness.fire('agent/inbox/inserted', { agent, message: userMessage('在吗') });
+    await harness.fire('agent/turn-stopping', { agent, turn: 1 });
+
+    assert.equal(agent.steered.length, 1);
+    assert.match(agent.steered[0].content[0].text, /subtext_pass/);
+
+    await harness.fire('agent/turn-stopping', { agent, turn: 1 });
+    assert.equal(agent.steered.length, 1, '同一回合不重复拦，防死循环');
+  });
+});
+
+test('打过卡就不拦，工作档也不拦', async () => {
+  await withHome(async () => {
+    const harness = makeHarness();
+    const chat = makeAgent('chat');
+    const work = makeAgent('work');
+    harness.roots.push(chat, work);
+    await apply(harness.ctx, {});
+    await harness.fire('agent/created', { agent: chat });
+    await harness.fire('agent/created', { agent: work });
+
+    await harness.fire('agent/inbox/inserted', { agent: chat, message: userMessage('在吗') });
+    const pass = harness.tools.find((tool) => tool.name === 'subtext_pass');
+    await pass.execute({ feeling: '打个招呼' }, { agent: chat });
+    await harness.fire('agent/turn-stopping', { agent: chat, turn: 1 });
+    assert.equal(chat.steered.length, 0);
+
+    await harness.fire('agent/inbox/inserted', { agent: work, message: userMessage('帮我看一下这个接口') });
+    await harness.fire('agent/turn-stopping', { agent: work, turn: 1 });
+    assert.equal(work.steered.length, 0);
+  });
+});
+
+test('新的一条用户消息会清掉上一轮的打卡状态', async () => {
+  await withHome(async () => {
+    const harness = makeHarness();
+    const agent = makeAgent('s1');
+    await boot(harness, agent);
+    const pass = harness.tools.find((tool) => tool.name === 'subtext_pass');
+
+    await harness.fire('agent/inbox/inserted', { agent, message: userMessage('在吗') });
+    await pass.execute({ feeling: '打个招呼' }, { agent });
+    await harness.fire('agent/turn-stopping', { agent, turn: 1 });
+    assert.equal(agent.steered.length, 0);
+
+    await harness.fire('agent/inbox/inserted', { agent, message: userMessage('今天好累') });
+    await harness.fire('agent/turn-stopping', { agent, turn: 2 });
+    assert.equal(agent.steered.length, 1);
   });
 });
