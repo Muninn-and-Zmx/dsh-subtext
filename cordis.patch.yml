@@ -1,0 +1,16 @@
+# 言外之意（dsh-subtext）bundle patch：在 profile 根上插一行。
+#
+# 想改边界就在 profile 的 cordis.patch.yml 里覆盖这一行，例如：
+#   - id: subtext
+#     config:
+#       enabled: true
+#       depth: 2
+#
+# 也可以不动这里，直接改 `$DSH_HOME/dsh-subtext.json`——那份优先级更高，
+# 而且改完下一句消息就生效，不用重启。
+- insert:
+    - id: subtext
+      name: 'dsh-subtext'
+      config:
+        enabled: true
+        depth: 1

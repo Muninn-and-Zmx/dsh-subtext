@@ -1,0 +1,7 @@
+node_modules/
+.dsh-backup/
+.downloads/
+.video-material/
+*.log
+*.tmp
+.DS_Store

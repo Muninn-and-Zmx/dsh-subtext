@@ -1,0 +1,49 @@
+{
+  "name": "dsh-subtext",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "言外之意：日常对话里听字面底下那一层（情感 → 需求 → 说不出口的部分），进入工作自动暂停；插件详情页可编辑工作语",
+  "author": "穆宁 / 烛梦曦",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-0"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "rules.js",
+    "text.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "prompt",
+    "conversation",
+    "subtext",
+    "empathy"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  }
+}
