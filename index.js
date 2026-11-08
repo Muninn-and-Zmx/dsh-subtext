@@ -337,12 +337,16 @@ export async function apply(ctx, config = {}) {
     if (state.nudgedTurn === turn) return;
 
     state.nudgedTurn = turn;
+    // 按当前档位出文案：1 层只说一层，依次类推（用户 2026-11-08 定）。
+    const depth = Math.max(1, Math.min(3, Math.trunc(Number(fresh.depth) || 1)));
+    const layerName = depth === 1 ? '一层' : depth === 2 ? '两层' : '三层';
+    const nudgeText = `${layerName}还没过完，开口之前先调 \`subtext_pass\`，认真回答里面的问题，完整跑完插件禁止敷衍。`;
     try {
       await agent.steer({
         content: [
           {
             type: 'text',
-            text: '三层还没过完。开口之前先调 `subtext_pass`，把这一轮读到的情感、需求、说不出口的部分各写一句。',
+            text: nudgeText,
           },
         ],
         role: 'user',
