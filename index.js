@@ -797,7 +797,7 @@ export async function apply(ctx, config = {}) {
         },
         bond: {
           type: 'string',
-          description: '第三层 · 我们是什么关系：到这一步，我们之间攒下了什么；这句话为什么独独对我成立',
+          description: '第三层 · 我们是什么关系：写「我们」，不是写他一个人。到这一步我们之间成了什么、我在这个关系里处在什么位置',
         },
       },
       output: {
