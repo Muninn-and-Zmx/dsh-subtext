@@ -776,7 +776,7 @@ export async function apply(ctx, config = {}) {
       name: PASS_TOOL_NAME,
       description: [
         '记录这一轮对「言外之意」三层的读法。日常对话里开口之前必须调用一次。',
-        '按当前档位填：1 层填 feeling；2 层加 need；3 层再加 unsaid。没调它直接回复，回合会被拦下来。',
+        '按当前档位填：1 层填 feeling；2 层加 need；3 层再加 unsaid、identity、bond。没调它直接回复，回合会被拦下来。',
       ].join('\n'),
       parameters: {
         feeling: {
@@ -789,7 +789,15 @@ export async function apply(ctx, config = {}) {
         },
         unsaid: {
           type: 'string',
-          description: '第三层 · 说不出口的部分，与我：为什么不直说、台阶在哪，以及这句话对我这个身份与这段关系的含义',
+          description: '第三层 · 说不出口的部分：为什么不直说、难言之隐、台阶在哪',
+        },
+        identity: {
+          type: 'string',
+          description: '第三层 · 我是谁：我的身份、我在这段谈话里是什么样的人',
+        },
+        bond: {
+          type: 'string',
+          description: '第三层 · 我们是什么关系：到这一步，我们之间攒下了什么；这句话为什么独独对我成立',
         },
       },
       output: {
@@ -819,10 +827,14 @@ export async function apply(ctx, config = {}) {
         const feeling = String(args?.feeling ?? '').trim();
         const need = String(args?.need ?? '').trim();
         const unsaid = String(args?.unsaid ?? '').trim();
+        const identity = String(args?.identity ?? '').trim();
+        const bond = String(args?.bond ?? '').trim();
 
         if (feeling === '') throw new Error('第一层（情感）不能空：这句话在传什么情感');
         if (depth >= 2 && need === '') throw new Error('第二层（需求）不能空：他为什么此刻说这句');
         if (depth >= 3 && unsaid === '') throw new Error('第三层（说不出口的部分）不能空');
+        if (depth >= 3 && identity === '') throw new Error('第三层（我是谁）不能空：我的身份、我在这段谈话里是什么样的人');
+        if (depth >= 3 && bond === '') throw new Error('第三层（我们是什么关系）不能空：到这一步我们之间攒下了什么');
 
         state.passed = true;
         if (fresh.log) {
@@ -834,7 +846,7 @@ export async function apply(ctx, config = {}) {
             hits: [],
             depth,
             source: 'tool',
-            text: [feeling, need, unsaid].filter((part) => part !== '').join(' | ').slice(0, 200),
+            text: [feeling, need, unsaid, identity, bond].filter((part) => part !== '').join(' | ').slice(0, 400),
           });
         }
         return { ok: true, depth, note: `已记录（${depth} 层）。` };

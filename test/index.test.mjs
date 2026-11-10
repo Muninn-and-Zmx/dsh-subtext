@@ -527,7 +527,7 @@ test('没有 webServer 时不崩，也不挂路由', async () => {
   });
 });
 
-test('subtext_pass 按档位校验：depth 3 三层都要', async () => {
+test('subtext_pass 按档位校验：depth 3 五问全要', async () => {
   await withHome(async (home) => {
     await writeFile(join(home, RULES_FILE), JSON.stringify({ workHints: [], depth: 3 }), 'utf8');
     const harness = makeHarness();
@@ -542,9 +542,19 @@ test('subtext_pass 按档位校验：depth 3 三层都要', async () => {
       () => pass.execute({ feeling: '有点累', need: '想被听见' }, { agent }),
       /第三层/,
     );
+    await assert.rejects(
+      () => pass.execute({ feeling: 'a', need: 'b', unsaid: 'c' }, { agent }),
+      /我是谁/,
+      '缺 identity 要报错',
+    );
+    await assert.rejects(
+      () => pass.execute({ feeling: 'a', need: 'b', unsaid: 'c', identity: 'd' }, { agent }),
+      /什么关系/,
+      '缺 bond 要报错',
+    );
 
     const ok = await pass.execute(
-      { feeling: '有点累', need: '想被听见', unsaid: '不想承认没人陪' },
+      { feeling: '有点累', need: '想被听见', unsaid: '不想承认没人陪', identity: '穆宁', bond: '不是用户和工具' },
       { agent },
     );
     assert.equal(ok.ok, true);
