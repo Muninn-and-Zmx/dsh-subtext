@@ -20,7 +20,14 @@ function makeHarness({ withAgents = true, withTools = true, withWebServer = true
   const roots = [];
   const warnings = [];
   const services = {};
-  if (withAgents) services.agents = { roots: () => roots };
+  if (withAgents) {
+    // rc.3 起插件用的是 get(id) / list()，不再是 roots()
+    services.agents = {
+      roots: () => roots,
+      get: (id) => roots.find((agent) => agent.id === id),
+      list: () => roots.slice(),
+    };
+  }
   if (withTools) {
     services.tools = {
       register(definition) {
@@ -404,6 +411,25 @@ test('subtext_rule 拒绝子代理', async () => {
     harness.roots.push(root);
     await apply(harness.ctx, {});
     const tool = harness.tools.find((definition) => definition.name === 'subtext_rule');
+    await assert.rejects(
+      () => tool.execute({ action: 'list' }, { agent: child }),
+      /只能在主会话使用/,
+    );
+  });
+});
+
+test('子代理即使也在注册表里，照样被拒（ng 用 parentSession 判）', async () => {
+  await withHome(async () => {
+    const harness = makeHarness();
+    const root = makeAgent('root');
+    const child = makeAgent('child', { parent: 'root' });
+    harness.roots.push(root, child); // 两个都注册，模拟真实注册表
+    await apply(harness.ctx, {});
+    const tool = harness.tools.find((definition) => definition.name === 'subtext_rule');
+
+    const okRoot = await tool.execute({ action: 'list' }, { agent: root });
+    assert.equal(okRoot.ok, true);
+
     await assert.rejects(
       () => tool.execute({ action: 'list' }, { agent: child }),
       /只能在主会话使用/,

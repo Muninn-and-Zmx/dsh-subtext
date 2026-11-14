@@ -162,21 +162,18 @@ export async function apply(ctx, config = {}) {
    */
   const isRootAgent = (agent) => {
     if (rules.scope === 'all') return true;
+    const id = agent?.id;
+    if (typeof id !== 'string' || id === '') return false;
     try {
-      const parent = agent?.session?.parentSession;
-      if (parent !== undefined && parent !== null) return false;
+      // rc.3 起 `agents.roots()` 已移除：用保留的 `get(id)` 确认会话活着，
+      // 再看 `session.parentSession`（子代理指向创建它的会话，根会话为空）。
+      const live = service('agents')?.get?.(id) ?? agent;
+      const parent = live?.session?.parentSession;
+      return parent === undefined || parent === null;
     } catch {
-      // session 拿不到就往下走
+      // 判不出来按根处理：功能缺失比误伤主会话更可接受
+      return true;
     }
-    try {
-      const roots = service('agents')?.roots?.();
-      if (Array.isArray(roots) && roots.length > 0) {
-        return roots.some((root) => root?.id === agent?.id);
-      }
-    } catch {
-      // roots() 不可用就按根处理
-    }
-    return true;
   };
 
   /** 某个会话当前该注入的文本。关掉或工作档都返回空串，整段消失。 */
@@ -874,15 +871,17 @@ export async function apply(ctx, config = {}) {
   refreshRules();
 
   // 热加载时已经有会话在跑，`agent/created` 不会重放，这里补一遍。
-  // 冷启动时 roots() 是空的，什么都不做。
+  // 冷启动时列表是空的，什么都不做。
   try {
-    const roots = service('agents')?.roots?.();
-    for (const agent of roots ?? []) {
+    const agents = service('agents');
+    const live = typeof agents?.list === 'function' ? agents.list() : [];
+    for (const agent of live) {
       if (!agent || typeof agent.id !== 'string' || states.has(agent.id)) continue;
+      if (!isRootAgent(agent)) continue;
       states.set(agent.id, EMPTY_STATE());
       registerSection(agent);
     }
   } catch {
-    // roots() 不可用就算了，等下一个 agent/created
+    // 拿不到列表就算了，等下一个 agent/created
   }
 }
