@@ -67,6 +67,7 @@ const EMPTY_STATE = () => ({
   decided: false,
   passed: false,
   nudgedTurn: null,
+  hintedTurn: null,
 });
 
 /**
@@ -253,6 +254,7 @@ export async function apply(ctx, config = {}) {
     if (!options.onlyIfChanged) {
       state.passed = false;
       state.nudgedTurn = null;
+      state.hintedTurn = null;
     }
 
     // 档位真的变了才广播：别的插件（语言层、语气层）可以拿它决定这一轮怎么说话。
@@ -301,12 +303,38 @@ export async function apply(ctx, config = {}) {
 
   // 兜底：万一 inserted 没赶上（消息已在 inbox 里被 claimed），这里补判一次。
   // 同一句话且档位没变时不重复写日志。
+  //
+  // 顺带在前一步末尾插一句「先打卡」：`agent/pre-step` 能替换进入这一步的消息，
+  // 把提醒放在模型这一步真正读到的最后一行，比写在系统提示中间那句更近。
+  // 2026-11-24 他嫌事后 steer 像惩罚，要的就是这个「事前递一句」。
   ctx.on('agent/pre-step', async (payload, next) => {
     const agent = payload?.agent;
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     const last = messages[messages.length - 1];
     if (agent && last) record(agent, last, { onlyIfChanged: true });
-    return next();
+
+    const decision = await next();
+
+    const state = agent && typeof agent.id === 'string' ? states.get(agent.id) : undefined;
+    if (!state || !state.decided) return decision;
+    const fresh = refreshRules();
+    if (!fresh.enabled || state.band !== 'chat' || state.passed) return decision;
+    if (state.hintedTurn === payload.turn) return decision;
+    if (decision?.kind !== 'enter' || !Array.isArray(decision.messages)) return decision;
+
+    state.hintedTurn = payload.turn;
+    return {
+      ...decision,
+      messages: [
+        ...decision.messages,
+        {
+          role: 'user',
+          content: [{ type: 'text', text: '先把 `subtext_pass` 调了再开口——这一轮的三层还没记。' }],
+          id: randomUUID(),
+          source: { kind: 'subtext' },
+        },
+      ],
+    };
   });
 
   // 会话走了，状态一起走。
