@@ -73,7 +73,7 @@ export function looksLikeReport(text) {
 export const DEFAULTS = Object.freeze({
   enabled: true,
   depth: 1,
-  order: -86,
+  order: 200,
   scope: 'root',
   workHints: DEFAULT_WORK_HINTS,
   leadVerbs: DEFAULT_LEAD_VERBS,
